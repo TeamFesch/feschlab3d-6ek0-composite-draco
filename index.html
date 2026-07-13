@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>6EK0_composite_draco - FeschLab3D Macro</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #8c8c8c; color: #f0ece5; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 10px 18px; display: flex; align-items: baseline; gap: 10px;
+    background: rgba(20,18,16,.85); border-bottom: 1px solid rgba(0,0,0,.25); }
+  header h1 { margin: 0; font-size: 16px; font-weight: 700; }
+  header .macro { color: #d98a52; font-weight: 800; }
+  #stage { position: relative; flex: 1; min-height: 0; }
+  #stage canvas { display: block; }
+  #layers { position: absolute; top: 12px; right: 12px; min-width: 190px;
+    background: rgba(20,18,16,.86); border: 1px solid rgba(255,255,255,.14);
+    border-radius: 10px; padding: 10px 12px; }
+  #layers .ttl { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: #cfc7bb; margin-bottom: 6px; }
+  #layers label.layer { display: flex; align-items: center; gap: 8px; font-size: 13px;
+    padding: 4px 0; cursor: pointer; }
+  #layers input { accent-color: #d98a52; }
+  #controls { display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 9px 18px; background: rgba(20,18,16,.9); border-top: 1px solid rgba(0,0,0,.25); }
+  #controls .grp { display: flex; align-items: center; gap: 8px; }
+  #controls label { font-size: 13px; color: #e6ded2; }
+  #controls input[type=range] { width: 120px; accent-color: #d98a52; }
+  #controls button { background: rgba(255,255,255,.12); color: #f0ece5;
+    border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 6px 12px;
+    font-size: 13px; font-weight: 600; cursor: pointer; }
+  #controls button:hover { background: rgba(255,255,255,.2); }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; color: #efe8dd; font-size: 15px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<header><h1>6EK0_composite_draco</h1><span class="macro">FeschLab3D Macro</span></header>
+<div id="stage">
+  <div id="layers"><div class="ttl">Calques</div></div>
+  <div id="loading">Chargement du modèle…</div>
+</div>
+<div id="controls">
+  <div class="grp"><input type="checkbox" id="rot" checked>
+    <label for="rot">Autorotation</label></div>
+  <div class="grp"><label for="speed">Vitesse</label>
+    <input type="range" id="speed" min="0" max="60" value="15"></div>
+  <div class="grp"><button id="reset">Recadrer la vue</button></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const PARTS = [{"key": "ballstick_ligand", "label": "Ligand · ball-and-stick"}, {"key": "ballstick_protein", "label": "Protéine · ball-and-stick"}, {"key": "ballstick_rna", "label": "ARN · ball-and-stick"}, {"key": "env_protein", "label": "Protéine · enveloppe électrostatique"}, {"key": "env_rna", "label": "ARN · enveloppe électrostatique"}];
+const stage = document.getElementById('stage');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(stage.clientWidth, stage.clientHeight);
+// Tone-mapping NEUTRE (KHR PBR Neutral, three ≥ 0.162) : éclaircit, préserve les
+// couleurs et roule les hautes lumières en douceur (pas de blanc cramé) → on peut
+// pousser l'exposition franchement sans écraser les ombres. Repli Linear si absent.
+renderer.toneMapping = THREE.NeutralToneMapping ?? THREE.LinearToneMapping;
+renderer.toneMappingExposure = 1.25;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8c8c8c);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+// Éclairage : gros PLANCHER ambiant uniforme pour RÉDUIRE LE CONTRASTE (écart
+// clair/sombre) — les zones à l'ombre remontent vers les mi-tons, l'éclairage
+// directionnel (hémisphérique + environnement) est allégé en conséquence. Ajustable.
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd0d0d0, 0.95));
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+
+const camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.1, 100000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 1.5;
+
+const draco = new DRACOLoader();
+draco.setDecoderPath('https://unpkg.com/three@0.170.0/examples/jsm/libs/draco/');
+const loader = new GLTFLoader();
+loader.setDRACOLoader(draco);
+
+const groups = {};
+let fitState = null;
+
+function partKey(name) {
+  return String(name).split('.')[0].split('__')[0];
+}
+
+function fit(root) {
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.length() * 0.5, 1e-3);
+  const dist = radius / Math.sin((camera.fov * Math.PI / 180) / 2) * 1.15;
+  controls.target.copy(center);
+  camera.position.set(center.x, center.y, center.z + dist);
+  camera.near = dist / 200; camera.far = dist * 20; camera.updateProjectionMatrix();
+  controls.update();
+  fitState = { center: center.clone(), dist };
+}
+
+loader.load('https://pub-45a4e359fe9c43b3bd9295fe9a083f77.r2.dev/feschlab3d-6ek0-composite-draco/6EK0_composite_draco.glb', (gltf) => {
+  const root = gltf.scene;
+  scene.add(root);
+  root.traverse(o => { if (o.isMesh) { const k = partKey(o.name); (groups[k] = groups[k] || []).push(o); } });
+  fit(root);
+  buildLayers();
+  document.getElementById('loading').remove();
+}, undefined, (err) => {
+  document.getElementById('loading').textContent = 'Erreur de chargement : ' + err;
+});
+
+function buildLayers() {
+  const panel = document.getElementById('layers');
+  const seen = new Set();
+  (PARTS || []).forEach(p => {
+    if (seen.has(p.key) || !(groups[p.key] && groups[p.key].length)) return;
+    seen.add(p.key);
+    const row = document.createElement('label');
+    row.className = 'layer';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true;
+    cb.addEventListener('change', () => groups[p.key].forEach(m => m.visible = cb.checked));
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(' ' + (p.label || p.key)));
+    panel.appendChild(row);
+  });
+  if (seen.size === 0) panel.style.display = 'none';
+}
+
+document.getElementById('rot').addEventListener('change', e => controls.autoRotate = e.target.checked);
+document.getElementById('speed').addEventListener('input', e => controls.autoRotateSpeed = e.target.value / 10);
+document.getElementById('reset').addEventListener('click', () => {
+  if (fitState) { controls.target.copy(fitState.center);
+    camera.position.set(fitState.center.x, fitState.center.y, fitState.center.z + fitState.dist);
+    controls.update(); }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = stage.clientWidth / stage.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+});
+
+(function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+</script>
+</body>
+</html>
